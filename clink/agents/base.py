@@ -90,6 +90,7 @@ class BaseCLIAgent:
 
         output_file_path: Path | None = None
         command_with_output_flag = list(command)
+        stdin_bytes = prompt.encode("utf-8")
 
         if self.client.output_to_file:
             fd, tmp_path = tempfile.mkstemp(prefix="clink-", suffix=".json")
@@ -102,6 +103,22 @@ class BaseCLIAgent:
                 raise CLIAgentError(f"Invalid output flag template '{flag_template}': missing placeholder {exc}")
             command_with_output_flag.extend(shlex.split(rendered_flag))
             sanitized_command = list(command_with_output_flag)
+
+        if self.client.prompt_to_arg:
+            # Some CLIs (e.g. agy) require the prompt as the value of their print
+            # flag rather than reading it from stdin. Render the real prompt into
+            # the flag for execution, but keep a redacted copy for logs/metadata so
+            # the (potentially large) prompt text isn't duplicated into every debug
+            # log line and success response.
+            flag_template = self.client.prompt_to_arg.flag_template
+            try:
+                rendered_args = [part.format(prompt=prompt) for part in shlex.split(flag_template)]
+            except KeyError as exc:  # pragma: no cover - defensive
+                raise CLIAgentError(f"Invalid prompt flag template '{flag_template}': missing placeholder {exc}")
+            redacted_args = [part.format(prompt="<prompt omitted>") for part in shlex.split(flag_template)]
+            sanitized_command = list(command_with_output_flag) + redacted_args
+            command_with_output_flag = command_with_output_flag + rendered_args
+            stdin_bytes = b""
 
         self._logger.debug("Executing CLI command: %s", " ".join(sanitized_command))
         if cwd:
@@ -122,7 +139,7 @@ class BaseCLIAgent:
 
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(prompt.encode("utf-8")),
+                process.communicate(stdin_bytes),
                 timeout=self.client.timeout_seconds,
             )
         except asyncio.TimeoutError as exc:
