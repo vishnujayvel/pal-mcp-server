@@ -143,6 +143,8 @@ Clink configurations live in `conf/cli_clients/`. We ship presets for the suppor
 - `codex.json` – runs `codex exec --json --dangerously-bypass-approvals-and-sandbox`
 - `agy.json` – runs `agy --sandbox` with the prompt delivered via `--print {prompt}` (Antigravity's `-p`/`--print` requires the prompt as a flag value, not stdin, and has no structured output format); authenticates via the local Antigravity session or `ANTIGRAVITY_API_KEY`
 
+> **Antigravity CLI version**: agy support requires Antigravity CLI **>= 1.1.1**. Older versions could silently drop stdout or hang when spawned non-interactively; see [antigravity-cli#76](https://github.com/google-antigravity/antigravity-cli/issues/76).
+
 > **CAUTION**: These flags intentionally bypass each CLI's safety prompts so they can edit files or launch tools autonomously via MCP. Only enable them in trusted sandboxes and tailor role prompts or CLI configs if you need more guardrails.
 
 Each preset points to role-specific prompts in `systemprompts/clink/`. Duplicate those files to add more roles or adjust CLI flags.

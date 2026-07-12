@@ -91,6 +91,7 @@ class BaseCLIAgent:
         output_file_path: Path | None = None
         command_with_output_flag = list(command)
         stdin_bytes = prompt.encode("utf-8")
+        stdin_mode = asyncio.subprocess.PIPE
 
         if self.client.output_to_file:
             fd, tmp_path = tempfile.mkstemp(prefix="clink-", suffix=".json")
@@ -118,6 +119,12 @@ class BaseCLIAgent:
             sanitized_command = list(command_with_output_flag) + redacted_args
             command_with_output_flag = command_with_output_flag + rendered_args
             stdin_bytes = b""
+            # No prompt is written to stdin in this mode, so leave the child's
+            # stdin closed rather than an open-but-empty pipe: some CLIs (e.g.
+            # pre-1.1.1 Antigravity, see google-antigravity/antigravity-cli#76)
+            # block waiting for stdin EOF/input when spawned non-interactively
+            # with an open stdin pipe.
+            stdin_mode = asyncio.subprocess.DEVNULL
 
         self._logger.debug("Executing CLI command: %s", " ".join(sanitized_command))
         if cwd:
@@ -126,7 +133,7 @@ class BaseCLIAgent:
         try:
             process = await asyncio.create_subprocess_exec(
                 *command_with_output_flag,
-                stdin=asyncio.subprocess.PIPE,
+                stdin=stdin_mode,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -137,8 +144,9 @@ class BaseCLIAgent:
             raise CLIAgentError(f"Executable not found for CLI '{self.client.name}': {exc}") from exc
 
         try:
+            communicate_input = stdin_bytes if stdin_mode == asyncio.subprocess.PIPE else None
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(stdin_bytes),
+                process.communicate(communicate_input),
                 timeout=self.client.timeout_seconds,
             )
         except asyncio.TimeoutError as exc:

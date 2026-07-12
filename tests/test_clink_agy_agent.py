@@ -42,10 +42,11 @@ def agy_agent():
 
 
 async def _run_agent_with_process(monkeypatch, agent, role, process, *, prompt="do something"):
-    captured: dict = {"command": []}
+    captured: dict = {"command": [], "kwargs": {}}
 
-    async def fake_create_subprocess_exec(*args, **_kwargs):
+    async def fake_create_subprocess_exec(*args, **kwargs):
         captured["command"].extend(args)
+        captured["kwargs"] = kwargs
         return process
 
     def fake_which(executable_name):
@@ -58,7 +59,7 @@ async def _run_agent_with_process(monkeypatch, agent, role, process, *, prompt="
 
 
 @pytest.mark.asyncio
-async def test_prompt_to_arg_injects_prompt_and_uses_empty_stdin(monkeypatch, agy_agent):
+async def test_prompt_to_arg_injects_prompt_and_uses_devnull_stdin(monkeypatch, agy_agent):
     agent, role = agy_agent
     process = DummyProcess(stdout=b"PONG")
 
@@ -66,8 +67,41 @@ async def test_prompt_to_arg_injects_prompt_and_uses_empty_stdin(monkeypatch, ag
 
     # the real prompt is delivered as the --print argument value, not via stdin
     assert captured["command"][-2:] == ["--print", "ping the model"]
-    assert process.stdin_data == b""
+    # stdin must be closed (DEVNULL), not an open-but-empty pipe: an open pipe
+    # with nothing written is the pre-1.1.1 Antigravity hang class described in
+    # google-antigravity/antigravity-cli#76.
+    assert captured["kwargs"]["stdin"] == asyncio.subprocess.DEVNULL
+    assert process.stdin_data is None
     assert result.parsed.content == "PONG"
+
+
+@pytest.mark.asyncio
+async def test_no_prompt_to_arg_keeps_stdin_pipe(monkeypatch):
+    # Regression guard: a client that does NOT set prompt_to_arg (e.g. gemini)
+    # must be completely unaffected by the agy-specific DEVNULL handling.
+    prompt_path = Path("systemprompts/clink/default.txt").resolve()
+    role = ResolvedCLIRole(name="default", prompt_path=prompt_path, role_args=[])
+    client = ResolvedCLIClient(
+        name="gemini",
+        executable=["gemini"],
+        internal_args=[],
+        config_args=[],
+        env={},
+        timeout_seconds=30,
+        parser="gemini_json",
+        runner=None,
+        roles={"default": role},
+        output_to_file=None,
+        prompt_to_arg=None,
+        working_dir=None,
+    )
+    agent = BaseCLIAgent(client)
+    process = DummyProcess(stdout=b'{"response": "ok"}')
+
+    _, captured = await _run_agent_with_process(monkeypatch, agent, role, process, prompt="ping the model")
+
+    assert captured["kwargs"]["stdin"] == asyncio.subprocess.PIPE
+    assert process.stdin_data == b"ping the model"
 
 
 @pytest.mark.asyncio
