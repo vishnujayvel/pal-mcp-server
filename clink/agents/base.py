@@ -111,11 +111,10 @@ class BaseCLIAgent:
             # the (potentially large) prompt text isn't duplicated into every debug
             # log line and success response.
             flag_template = self.client.prompt_to_arg.flag_template
-            try:
-                rendered_args = [part.format(prompt=prompt) for part in shlex.split(flag_template)]
-            except KeyError as exc:  # pragma: no cover - defensive
-                raise CLIAgentError(f"Invalid prompt flag template '{flag_template}': missing placeholder {exc}")
-            redacted_args = [part.format(prompt="<prompt omitted>") for part in shlex.split(flag_template)]
+            if "{prompt}" not in flag_template:
+                raise CLIAgentError(f"Invalid prompt flag template '{flag_template}': missing '{{prompt}}' placeholder")
+            rendered_args = [part.replace("{prompt}", prompt) for part in shlex.split(flag_template)]
+            redacted_args = [part.replace("{prompt}", "<prompt omitted>") for part in shlex.split(flag_template)]
             sanitized_command = list(command_with_output_flag) + redacted_args
             command_with_output_flag = command_with_output_flag + rendered_args
             stdin_bytes = b""
